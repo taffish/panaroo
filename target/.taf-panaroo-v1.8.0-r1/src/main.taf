@@ -1,0 +1,2 @@
+<taf-app:container:ghcr.io/taffish/panaroo:1.8.0-r1>
+panaroo ::*ARGV*::
