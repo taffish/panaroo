@@ -1,12 +1,11 @@
 # syntax=docker/dockerfile:1.7
 
 ARG DEBIAN_IMAGE=debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
-
 FROM ${DEBIAN_IMAGE} AS builder
 
 ARG TARGETARCH
-ARG PANAROO_VERSION=1.8.0
-ARG PANAROO_SHA256=3890a71c140a17c69fb3a1dd52598ee375a05fcbd10e0e283a59016ec027ef4f
+ARG PANAROO_VERSION=1.8.1
+ARG PANAROO_SHA256=b909740a0e7ab371a871a18467f1eaa61d5d0581117c62f440bd16c16b37c302
 ARG BIOCODE_VERSION=0.12.1
 ARG BIOCODE_SHA256=cfc6d19948bbfd525c8d46739c2a6ffc8d5aae8c4e7f7cd9ac9ed2de30a702fd
 ARG TAXADB_VERSION=0.12.1
@@ -22,6 +21,10 @@ ARG VCXPROJ_MAKE_SHA256=902735703004c47705ffa389329378f237fecb154945b489edf6abe2
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Debian repositories are rolling within this suite: dependency versions and
+# availability can drift. The base digest does not freeze future apt results.
+# On failure, distinguish network/TLS/index errors from 404 retirement,
+# truncated downloads and changed bytes; check the official release and platform.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get -o Acquire::Retries=10 update \
@@ -38,6 +41,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       python3-venv \
       tar
 
+# Fixed archives fail closed on checksum changes. Their upstream hosts can
+# withdraw files; hashes ensure identity, not permanent download availability.
+# pip build-isolation dependencies may also change independently of these pins.
+# Restore old archives only from trusted copies matching the original SHA256.
+# Otherwise review new official versions, architectures, dependencies and licenses
+# before updating source identity and rerunning native builds, offline smoke and
+# wrapper checks. Do not bypass integrity checks or blindly regenerate hashes.
 RUN set -eux; \
     mkdir -p /opt/panaroo/libexec /opt/panaroo/prokka-bin /opt/panaroo/share/licenses /opt/panaroo/share/provenance; \
     curl -fsSL "https://codeload.github.com/gtonkinhill/panaroo/tar.gz/refs/tags/v${PANAROO_VERSION}" -o /tmp/panaroo.tar.gz; \
@@ -69,7 +79,7 @@ RUN set -eux; \
     find /opt/panaroo/venv -depth -type d -name __pycache__ -empty -delete; \
     printf '%s\n' \
       "panaroo_version=${PANAROO_VERSION}" \
-      "panaroo_commit=e96b4978327536256b5c663f741138fc7aabed64" \
+      "panaroo_commit=dbe596c3d24acfe2df1be64f76550b324d167243" \
       "panaroo_source_sha256=${PANAROO_SHA256}" \
       "biocode_version=${BIOCODE_VERSION}" \
       "biocode_source_sha256=${BIOCODE_SHA256}" \
@@ -119,7 +129,7 @@ RUN set -eux; \
 
 FROM ${DEBIAN_IMAGE}
 
-ARG PANAROO_VERSION=1.8.0
+ARG PANAROO_VERSION=1.8.1
 
 LABEL org.opencontainers.image.title="TAFFISH Panaroo" \
       org.opencontainers.image.description="Panaroo bacterial pangenome analysis with its supported external tools" \
@@ -133,8 +143,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH=/opt/panaroo/venv/bin:/usr/local/bin:/usr/bin:/bin \
     TAFFISH_ENV=TAFFISH \
-    TAFFISH_NAME=panaroo
+    TAFFISH_NAME=panaroo \
+    TAFFISH_VERSION=${PANAROO_VERSION} \
+    TAFFISH_RELEASE=1
 
+# Runtime apt packages can drift; record the resolved versions below. A failed
+# future source/dependency fetch requires review, not silently relaxing hashes.
+# This resolved package inventory is provenance, not an input dependency lock.
+# Headless Java remains required by Prokka's MinCED after the desktop split.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get -o Acquire::Retries=10 update \
@@ -191,14 +207,30 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
  && find /usr -xdev -type f -name '*.py[co]' -delete \
  && find /usr -xdev -depth -type d -name __pycache__ -empty -delete
 
+# MAFFT invokes file for UTF-16/UTF-32 input diagnostics before alignment.
+# Keep this runtime addition separate so the scientific stack remains cached.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get -o Acquire::Retries=10 update \
+ && apt-get -o Acquire::Retries=10 install -y --no-install-recommends file \
+ && dpkg-query -W -f='${binary:Package}\t${Version}\n' | sort > /opt/panaroo/share/provenance/debian-packages.tsv \
+ && find /usr/share/doc -type f ! -name copyright -delete \
+ && find /usr/share/doc -type l -delete \
+ && find /usr/share/doc -depth -type d -empty -delete \
+ && rm -rf /usr/share/man/* /usr/share/info/*
+
 ENV PYTHONWARNINGS=ignore::SyntaxWarning
 
 COPY --from=builder /opt/panaroo /opt/panaroo
 COPY docker/panaroo-smoke.sh /opt/panaroo/share/testdata/panaroo-smoke.sh
 COPY docker/panaroo-smoke-fixtures.py /opt/panaroo/share/testdata/panaroo-smoke-fixtures.py
 COPY docker/panaroo-convert-bakta-to-prokka-gff /usr/local/bin/panaroo-convert-bakta-to-prokka-gff
+COPY src/mash_resources.py /opt/panaroo/libexec/mash_resources.py
 
 RUN set -eux; \
+    chmod 0755 /opt /opt/panaroo /opt/panaroo/share /opt/panaroo/share/testdata; \
+    chmod 0755 /opt/panaroo/libexec/mash_resources.py; \
+    ln -s /opt/panaroo/libexec/mash_resources.py /usr/local/bin/panaroo-mash-resources; \
     ln -s /opt/panaroo/famsa /usr/local/bin/famsa; \
     ln -s /opt/panaroo/muscle /usr/local/bin/muscle; \
     for command in /opt/panaroo/prokka-bin/prokka*; do \

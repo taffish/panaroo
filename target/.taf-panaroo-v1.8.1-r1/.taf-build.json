@@ -1,0 +1,6 @@
+{
+  "artifact": "taf-panaroo-v1.8.1-r1",
+  "schema": "taffish.build/v1",
+  "source_sha256": "8ffab649ccda9ef07d7f74867ad2e11971ad5cf5aa441eadbd03b50260fdf64b",
+  "wrapper_sha256": "2cc0668f421f4baf8edaf435406beaf5a4f0aa84fa715d86f621810689fb1637"
+}

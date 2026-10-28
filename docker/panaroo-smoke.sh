@@ -8,9 +8,33 @@ new_tmp() {
     mktemp -d "/tmp/taf-panaroo-${mode}-XXXXXX"
 }
 
+finish() {
+    code=$?
+    trap - 0
+    if test "$code" -ne 0 && test -n "${tmp:-}"; then
+        find "$tmp" -type f -name '*.log' -exec tail -n 60 {} \; >&2
+    fi
+    if test -n "${tmp:-}"; then rm -rf "$tmp"; fi
+    exit "$code"
+}
+trap finish 0
+trap 'exit 130' 2
+trap 'exit 143' 15
+
 case "$mode" in
+    resources)
+        tmp=$(new_tmp)
+        python3 "$fixture" prokka "$tmp/ref"
+        mash sketch -k 15 -s 100 -o "$tmp/ref/tiny" "$tmp/ref/prokka-smoke.fna"
+        printf '%s\n' 'Synthetic fixture. CC0-1.0.' > "$tmp/LICENSE"
+        sha=$(sha256sum "$tmp/ref/tiny.msh" | cut -d ' ' -f 1)
+        panaroo-mash-resources prepare --resource-root "$tmp/member" \
+            --file "$tmp/ref/tiny.msh" --sha256 "$sha" --id synthetic-v1 \
+            --source urn:taffish:synthetic --license-file "$tmp/LICENSE" --rights-reviewed
+        panaroo-mash-resources verify --resource-root "$tmp/member"
+        ;;
     identity)
-        panaroo --version | grep -Fx 'panaroo 1.8.0' >/dev/null
+        panaroo --version | grep -Fx 'panaroo 1.8.1' >/dev/null
         python3 - <<'PY'
 from importlib.metadata import version
 import biocode
@@ -26,13 +50,13 @@ import plotly
 import scipy
 import sklearn
 import panaroo
-assert panaroo.__version__ == "1.8.0"
-assert version("panaroo") == "1.8.0"
+assert panaroo.__version__ == "1.8.1"
+assert version("panaroo") == "1.8.1"
 assert version("biocode") == "0.12.1"
 assert version("taxadb") == "0.12.1"
 PY
-        grep -Fx 'panaroo_commit=e96b4978327536256b5c663f741138fc7aabed64' /opt/panaroo/share/provenance/source.txt >/dev/null
-        grep -Fx 'panaroo_source_sha256=3890a71c140a17c69fb3a1dd52598ee375a05fcbd10e0e283a59016ec027ef4f' /opt/panaroo/share/provenance/source.txt >/dev/null
+        grep -Fx 'panaroo_commit=dbe596c3d24acfe2df1be64f76550b324d167243' /opt/panaroo/share/provenance/source.txt >/dev/null
+        grep -Fx 'panaroo_source_sha256=b909740a0e7ab371a871a18467f1eaa61d5d0581117c62f440bd16c16b37c302' /opt/panaroo/share/provenance/source.txt >/dev/null
         grep -Fx 'prokka_source_sha256=f730b5400ea9e507bfe6c5f3d22ce61960a897195c11571c2e1308ce2533faf8' /opt/panaroo/share/provenance/source.txt >/dev/null
         grep -Fx 'muscle_source_sha256=74b22a94e630b16015c2bd9ae83aa2be2c2048d3e41f560b2d4a954725c81968' /opt/panaroo/share/provenance/source.txt >/dev/null
         famsa -h 2>&1 | grep -E 'version 2\.4\.1([ -]|$)' >/dev/null
@@ -79,7 +103,6 @@ PY
         ;;
     core)
         tmp=$(new_tmp)
-        trap 'rm -rf "$tmp"' 0 1 2 3 15
         python3 "$fixture" gffs "$tmp/input"
         panaroo -i "$tmp"/input/*.gff -o "$tmp/output" \
             --clean-mode sensitive --remove-invalid-genes --refind-mode off -t 1 \
@@ -94,7 +117,6 @@ PY
         ;;
     aligners)
         tmp=$(new_tmp)
-        trap 'rm -rf "$tmp"' 0 1 2 3 15
         python3 "$fixture" aligners "$tmp"
         mafft --auto --amino "$tmp/proteins.fa" >"$tmp/mafft.fa" 2>"$tmp/mafft.log"
         clustalo -i "$tmp/proteins.fa" -t Protein --threads 1 -o "$tmp/clustal.fa" --force
@@ -109,7 +131,6 @@ PY
         ;;
     formats)
         tmp=$(new_tmp)
-        trap 'rm -rf "$tmp"' 0 1 2 3 15
         python3 "$fixture" formats "$tmp"
         python3 - "$tmp/sample.gbk" "$tmp/from-genbank.gff" <<'PY'
 import sys
@@ -128,7 +149,6 @@ PY
         ;;
     qc)
         tmp=$(new_tmp)
-        trap 'rm -rf "$tmp"' 0 1 2 3 15
         python3 "$fixture" gffs "$tmp/input"
         mkdir "$tmp/output"
         panaroo-qc -i "$tmp"/input/*.gff -o "$tmp/output" \
@@ -155,8 +175,10 @@ PY
         ;;
     prokka)
         tmp=$(new_tmp)
-        trap 'rm -rf "$tmp"' 0 1 2 3 15
         python3 "$fixture" prokka "$tmp/input"
+        # Exercise the retained headless Java runtime, not only MinCED's banner.
+        minced "$tmp/input/prokka-smoke.fna" "$tmp/minced.txt" >"$tmp/minced.log" 2>&1
+        test -f "$tmp/minced.txt"
         mkdir "$tmp/output"
         if ! run_prokka -i "$tmp/input/prokka-smoke.fna" -o "$tmp/output" \
             --num_training 1 --force -t 1 >"$tmp/run-prokka.log" 2>&1
@@ -173,7 +195,7 @@ PY
         grep -F 'Annotation finished successfully.' "$tmp/output/prokka-smoke_prokka.log" >/dev/null
         ;;
     *)
-        echo "usage: panaroo-smoke {identity|interfaces|core|aligners|formats|qc|prokka}" >&2
+        echo "usage: panaroo-smoke {identity|interfaces|core|aligners|formats|qc|prokka|resources}" >&2
         exit 2
         ;;
 esac

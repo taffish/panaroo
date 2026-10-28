@@ -1,0 +1,40 @@
+<shell>
+# Expose a verified sketch read-only; --ref_db remains an explicit user choice.
+taf_panaroo_mount() {
+    taf_pa_backend="$1"
+    case "${TAFFISH_PANAROO_DB_AUTO_MOUNT:-1}" in
+        0) printf -- '--env=TAFFISH_ENV=TAFFISH'; return ;;
+        1) ;;
+        *) printf >&2 'taf-panaroo: DB_AUTO_MOUNT must be 0 or 1\n'
+           printf -- '--taf-panaroo-invalid-resource'; return ;;
+    esac
+    taf_pa_root="${TAFFISH_PANAROO_DB_PATH:-}"
+    if test "${TAFFISH_PANAROO_DB_PATH+x}" != x; then
+        for taf_pa_path in "${HOME}/.local/share/taffish/databases/panaroo/mash" /usr/local/share/taffish/databases/panaroo/mash /opt/taffish/databases/panaroo/mash; do
+            if test -e "$taf_pa_path" || test -L "$taf_pa_path"; then taf_pa_root="$taf_pa_path"; break; fi
+        done
+        if test -z "$taf_pa_root"; then printf -- '--env=TAFFISH_ENV=TAFFISH'; return; fi
+    fi
+    taf_pa_ok=1
+    if ! test -d "$taf_pa_root"; then taf_pa_ok=0; else
+        taf_pa_root="$(CDPATH= cd "$taf_pa_root" && pwd -P)"
+        case "$taf_pa_root" in *:*|*,*) taf_pa_ok=0 ;; esac
+        if ! command -v python3 >/dev/null 2>&1; then
+            printf >&2 'taf-panaroo: automatic resource validation needs host Python 3; disable discovery and verify inside the container before a manual bind.\n'
+            taf_pa_ok=0
+        elif ! python3 -I -B "::*LOADDIR*::/mash_resources.py" verify --resource-root "$taf_pa_root" >&2; then
+            taf_pa_ok=0
+        fi
+    fi
+    if test "$taf_pa_ok" != 1; then
+        printf >&2 'taf-panaroo: invalid/unprepared resource: %s; choose DB_PATH or disable DB_AUTO_MOUNT for setup/manual binds.\n' "$taf_pa_root"
+        printf -- '--taf-panaroo-invalid-resource'; return
+    fi
+    if test "$taf_pa_backend" = apptainer; then
+        printf -- '--bind=%s:/panaroo-mash:ro' "$taf_pa_root"
+    else
+        printf -- '--volume=%s:/panaroo-mash:ro' "$taf_pa_root"
+    fi
+}
+<taf-app:container:ghcr.io/taffish/panaroo:1.8.1-r1$@[docker/podman: "$(taf_panaroo_mount docker)"][apptainer: "$(taf_panaroo_mount apptainer)"]>
+panaroo ::*ARGV*::

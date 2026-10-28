@@ -1,87 +1,84 @@
-Panaroo 1.8.0 - bacterial pangenome analysis
-TAFFISH package: panaroo 1.8.0-r1
+Panaroo 1.8.1 - bacterial pangenome analysis
+TAFFISH package: panaroo 1.8.1-r1
 
 Usage:
   taf-panaroo [PANAROO_OPTIONS...]
   taf-panaroo -- [PANAROO_OPTIONS...]
   taf-panaroo COMMAND [COMMAND_OPTIONS...]
+  taf-panaroo --help                 Installed-app help
+  taf-panaroo --version              Package version
+  taf-panaroo -- --help              Upstream help
+  taf-panaroo -- --version           Upstream version
 
-Wrapper options:
-  -h, --help       Show this installed-app guide
-  -v, --version    Show the TAFFISH package version
-  --compile        Print generated shell code instead of running it
-  --               Pass option-leading arguments to Panaroo
-
-Show upstream help and version:
-  taf-panaroo -- --help
-  taf-panaroo -- --version
-
-Main input:
-  Panaroo normally reads two or more Prokka-style GFF3 files. Each file must
-  contain annotations followed by an ##FASTA section. GenBank files and list
-  files are also supported by Panaroo's upstream input parser.
-
-Basic analysis:
+Build a pangenome from combined Prokka-style GFF3+FASTA inputs:
   taf-panaroo -i isolate1.gff isolate2.gff isolate3.gff \
     -o panaroo-results --clean-mode strict -t 8
-
-Core-gene alignment:
-  taf-panaroo -i *.gff -o panaroo-results --clean-mode strict \
+  taf-panaroo -i *.gff -o aligned --clean-mode strict \
     --alignment core --aligner mafft -t 8
+Keep inputs/outputs under the working directory, or bind external directories.
+For a path containing spaces, preserve inner quotes through command mode:
+  taf-panaroo panaroo-convert-bakta-to-prokka-gff \
+    --gff '"input file.gff3"' --out '"converted file.gff"'
 
-Inputs and outputs should be under the current working tree so the container
-can see them. Panaroo creates the main output directory; avoid reusing a
-nonempty result directory unless the selected upstream command permits it.
-
-Packaged Panaroo commands:
-  panaroo                    Main pangenome pipeline
-  panaroo-qc                 Pre-run QC tables, PNGs, and interactive HTML
-  run_prokka                 Re-run Prokka with Panaroo-trained Prodigal
-  panaroo-merge              Merge Panaroo graphs
-  panaroo-msa                Generate alignments after a Panaroo run
-  panaroo-integrate          Integrate additional genomes
-  panaroo-filter-pa          Filter presence/absence matrices
-  panaroo-generate-gffs      Generate post-run GFF outputs
-  panaroo-extract-gene       Extract gene FASTA sequences
-
-Additional installed interfaces include panaroo-plot-abundance,
-panaroo-spydrpick, panaroo-img, panaroo-fmg,
-panaroo-gene-neighbourhood, and the Bakta converter.
-
-Run a secondary command through automatic command mode:
-  taf-panaroo panaroo-qc --help
+Secondary commands:
   taf-panaroo panaroo-merge --help
   taf-panaroo run_prokka --help
+  taf-panaroo panaroo-msa --help
+The complete Prokka database is already indexed; no setup is needed.
 
-Convert a Bakta combined GFF3 file:
-  taf-panaroo panaroo-convert-bakta-to-prokka-gff \
-    --gff bakta.gff3 --out prokka-style.gff
-
-Generate QC reports:
-  mkdir -p panaroo-qc
+Create offline QC reports (the output directory must already exist):
+  mkdir -p qc
   taf-panaroo panaroo-qc -i isolate1.gff isolate2.gff isolate3.gff \
-    -o panaroo-qc --graph_type all -t 4
+    -o qc --graph_type all --random_seed 1 -t 4
+Open qc/*.html directly on the host; no server is needed for these reports.
+Use a QC output path without spaces or shell metacharacters, including parents.
+Inner quotes cannot fix the upstream QC command's internal Mash shell parsing.
 
-panaroo-qc requires its output directory to exist. It writes self-contained
-Plotly HTML files and PNG images; open the HTML files directly on the host.
-There is no web server, port, login, noVNC session, or bundled browser.
+Optional Mash reference: import a local authorized sketch, never auto-download.
+  mkdir -p shared
+  taf-panaroo panaroo-mash-resources prepare --resource-root shared/mash \
+    --file reference.msh --sha256 ACTUAL_SHA256 --id YOUR_VERSION \
+    --source urn:your-source:version --license-file LICENSE \
+    --rights-reviewed --access public --dry-run
+Review the plan, then repeat without --dry-run. The parent must already exist.
+Use --access personal for private data; public requires permission to share.
+Existing complete resources are reused; conflicting/broken resources are never
+overwritten. Restore the original bytes or choose a new versioned path.
+Keep any linked .NAME.payload.* directory: it is permanent resource storage.
 
-External tools included for supported paths:
-  CD-HIT/CD-HIT-EST, Mash, Prokka, Prodigal, MAFFT, PRANK, Clustal Omega,
-  MUSCLE 5, and FAMSA 2.4.1. MAFFT remains required by some profile/codon
-  alignment paths even when another aligner is selected.
+Select a prepared member (host path); it mounts read-only at /panaroo-mash:
+  export TAFFISH_PANAROO_DB_PATH="$PWD/shared/mash"
+  taf-panaroo panaroo-qc -i *.gff -o qc --ref_db /panaroo-mash/reference.msh
+Discovery order: explicit DB_PATH, ~/.local/share/taffish/databases/panaroo/mash,
+/usr/local/share/taffish/databases/panaroo/mash, /opt/taffish/databases/panaroo/mash.
+Set TAFFISH_PANAROO_DB_AUTO_MOUNT=0 during setup or for manual binds.
+Automatic verification needs host Python 3. Invalid roots fail explicitly.
+An administrator can prepare once with public access and searchable parents;
+ordinary users reuse the verified system member without downloading again.
+Manual read-only fallback: disable discovery, then choose one backend below.
+  export TAFFISH_PANAROO_DB_AUTO_MOUNT=0
+Docker:
+  export TAFFISH_CONTAINER_BACKEND=docker
+  export TAFFISH_DOCKER_RUN_ARGS="--volume \"$PWD/shared/mash:/panaroo-mash:ro\""
+  taf-panaroo panaroo-mash-resources verify --resource-root /panaroo-mash
+Podman:
+  export TAFFISH_CONTAINER_BACKEND=podman
+  export TAFFISH_PODMAN_RUN_ARGS="--volume \"$PWD/shared/mash:/panaroo-mash:ro\""
+  taf-panaroo panaroo-mash-resources verify --resource-root /panaroo-mash
+Apptainer:
+  export TAFFISH_CONTAINER_BACKEND=apptainer
+  export TAFFISH_APPTAINER_RUN_ARGS="--bind \"$PWD/shared/mash:/panaroo-mash:ro\""
+  taf-panaroo panaroo-mash-resources verify --resource-root /panaroo-mash
+After verification, use panaroo-qc --ref_db /panaroo-mash/reference.msh as above.
 
-  The complete Prokka 1.14.6 database is already indexed in the image; users
-  do not need to download or initialize it before running run_prokka. Barrnap
-  and MinCED annotation paths are included. SignalP and RNAmmer are not bundled
-  because their upstream distribution terms require separate authorization.
+Optional graph browsing requires the separate Cytoscape app:
+  Panaroo writes panaroo-results/final_graph.gml; it does not start a desktop.
+  taf-cytoscape --help
+Use that app's launch commands with --network panaroo-results/final_graph.gml.
+For a command-mode path with spaces, use --network '"results with spaces/final_graph.gml"'.
+Cytoscape is not needed for Panaroo analysis or the offline QC reports.
 
-Boundaries:
-  --ref_db for contamination QC is user-supplied; no database is downloaded.
-  Large cohorts and whole-pangenome alignments can require substantial RAM,
-  disk, and time. Set -t according to resources available to the container.
-  Scientific interpretation and production-data validation remain the user's
-  responsibility; bundled smoke tests exercise only small synthetic inputs.
-
-Upstream documentation:
-  https://gtonkinhill.github.io/panaroo/
+Troubleshooting:
+  taf-panaroo panaroo-mash-resources --help
+Keep existing results/resources when retrying; do not delete unknown lock files.
+Upstream manual: https://gtonkinhill.github.io/panaroo/
